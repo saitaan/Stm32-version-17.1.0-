@@ -6,12 +6,17 @@ on:
       - '**.zip'
       - '.github/workflows/**'
       - '**.ino'
+      - '**.h'
+      - '**.cpp'
+      - '**.sh'
+    branches: [ main, master ]
+  pull_request:
     branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
-    name: ⚡ Unzip & Build STM32 V16.5.0
+    name: ⚡ Unzip & Build STM32 V17.1.0
     runs-on: ubuntu-latest
 
     steps:
@@ -25,7 +30,19 @@ jobs:
           if [ -n "$ZIP_FILE" ]; then
             echo "Found ZIP file: $ZIP_FILE"
             echo "Unzipping archive on GitHub runner..."
-            unzip -o "$ZIP_FILE"
+            rm -rf _unzip_staging
+            mkdir -p _unzip_staging
+            unzip -q -o "$ZIP_FILE" -d _unzip_staging
+            
+            FOUND_SKETCH=$(find _unzip_staging -name "*.ino" | head -n 1)
+            if [ -n "$FOUND_SKETCH" ]; then
+              EXTRACTED_DIR=$(dirname "$FOUND_SKETCH")
+              echo "Found sketch in: $EXTRACTED_DIR"
+              if [ "$EXTRACTED_DIR" != "." ]; then
+                cp -rf _unzip_staging/* .
+              fi
+            fi
+            rm -rf _unzip_staging
             echo "Extraction completed successfully!"
           else
             echo "No ZIP file found, checking if raw .ino already exists..."
@@ -40,53 +57,80 @@ jobs:
           SKETCH_DIR=$(dirname "$INO_FILE")
           echo "SKETCH_DIR=$SKETCH_DIR" >> $GITHUB_ENV
 
+      - name: 🧪 Run Host Regression Tests (Fail-Fast Verification)
+        run: |
+          if [ -f "tests/run_tests.sh" ]; then
+            echo "Running host regression test suite..."
+            bash tests/run_tests.sh
+            echo "✅ All host tests passed 100% GREEN!"
+          else
+            echo "No tests/run_tests.sh found, proceeding to compilation..."
+          fi
+
       - name: 🛠️ Setup Arduino CLI
         uses: arduino/setup-arduino-cli@v1
 
       - name: 📦 Install STM32 Core & LCD Library
         run: |
-          arduino-cli config init
+          arduino-cli config init --overwrite
           arduino-cli config add board_manager.additional_urls https://github.com/stm32duino/BoardManagerFiles/raw/main/package_stmicroelectronics_index.json
           arduino-cli core update-index
           arduino-cli core install STMicroelectronics:stm32
           arduino-cli lib install "LiquidCrystal I2C"
 
-      - name: ⚡ Compile STM32F103C8T6 Firmware
+      - name: ⚡ Compile STM32F103C8T6 Firmware (V17.1.0)
         run: |
           mkdir -p build
           echo "Compiling sketch in $SKETCH_DIR for STM32 Blue Pill..."
-          arduino-cli compile --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8 \
+          arduino-cli compile \
+            --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8 \
+            --warnings all \
             --output-dir build \
             --export-binaries \
             "$SKETCH_DIR"
 
-      - name: 🔍 Verify ARM Vector Table & Integrity
+      - name: 🔍 Verify ARM Vector Table & V17.1.0 Provenance
         run: |
-          BIN_FILE=$(find build/ -name "*.bin" | head -n 1)
+          BIN_FILE=$(find build/ -maxdepth 1 -name "*.bin" | head -n 1)
           if [ -z "$BIN_FILE" ]; then
             echo "❌ ERROR: No .bin output binary found!"
             exit 1
           fi
-          cp "$BIN_FILE" build/STM32_Zipper_CNC_V16_5_0_Production.bin
+          cp "$BIN_FILE" build/STM32_Zipper_CNC_V17_1_0_Production.bin
           
-          BIN_SIZE=$(stat -c%s build/STM32_Zipper_CNC_V16_5_0_Production.bin)
+          BIN_SIZE=$(stat -c%s build/STM32_Zipper_CNC_V17_1_0_Production.bin)
           echo "✅ Compiled Binary Size: $BIN_SIZE bytes ($((BIN_SIZE / 1024)) KB)"
           
           python3 -c "
-          with open('build/STM32_Zipper_CNC_V16_5_0_Production.bin', 'rb') as f:
-              b = f.read(8)
+          from pathlib import Path
+          p = Path('build/STM32_Zipper_CNC_V17_1_0_Production.bin')
+          b = p.read_bytes()
+          assert 8192 <= len(b) <= 65536, f'Binary size out of 64KB BluePill Flash bounds: {len(b)} bytes'
           sp = int.from_bytes(b[0:4], 'little')
           pc = int.from_bytes(b[4:8], 'little')
           print(f'Initial SP: {hex(sp)} | Reset PC: {hex(pc)}')
           if 0x20000000 <= sp <= 0x20005000 and 0x08000000 <= pc <= 0x08010000:
               print('🛡️ ARM Vector Table Verification: 100% PASSED & SAFE!')
           else:
-              print('⚠️ WARNING: Vector table out of standard bounds!')
+              print('❌ ERROR: Vector table out of standard bounds!')
+              exit(1)
+          if (pc & 1) != 1:
+              print('❌ ERROR: Cortex-M3 Thumb bit not set on reset vector!')
+              exit(1)
+
+          expected_tag = b'NIPON_ZIPPER_CNC_FW_V17_1_0_PA0_TIM2_CAPTURE_PA8_TIM1_TIMING_GUARD:OCT-2026'
+          if expected_tag in b:
+              print('🏷️ Embedded V17.1.0 ROM Provenance Metadata Tag: 100% VERIFIED!')
+          else:
+              print('❌ ERROR: Missing embedded V17.1.0 ROM provenance metadata tag in binary!')
+              exit(1)
+          print('🚀 V17.1.0 Production Binary Verification Complete: 100% READY FOR HARDWARE FLASHING!')
           "
 
       - name: 🚀 Upload Compiled Production Binary Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: STM32_Zipper_CNC_V16_5_0_Production_Binary
-          path: build/STM32_Zipper_CNC_V16_5_0_Production.bin
+          name: STM32_Zipper_CNC_V17_1_0_Production_Binary
+          path: build/STM32_Zipper_CNC_V17_1_0_Production.bin
           if-no-files-found: error
+          
