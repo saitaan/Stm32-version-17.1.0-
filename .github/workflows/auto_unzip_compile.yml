@@ -46,5 +46,42 @@ jobs:
           mkdir -p build_output
           cp STM32_Zipper_CNC_V17_1_0_Firmware/STM32_Zipper_CNC_V17_1_0_Firmware.ino build_output/firmware_baremetal.cpp
           cp STM32_Zipper_CNC_V17_1_0_Firmware/baremetal_cmsis_stm32f103.h build_output/
-          cp STM32_Zipper_CNC
-          
+          cp STM32_Zipper_CNC_V17_1_0_Firmware/stm32f103c6t6.ld build_output/
+
+          arm-none-eabi-g++ \
+            -mcpu=cortex-m3 -mthumb \
+            -Os -flto -ffunction-sections -fdata-sections \
+            -fno-exceptions -fno-rtti -fno-use-cxa-atexit -fno-threadsafe-statics \
+            -nostdlib -nostartfiles \
+            -DPURE_BAREMETAL_BUILD -DSTM32F103x6 \
+            -Ibuild_output -Iinclude \
+            -T build_output/stm32f103c6t6.ld \
+            -Wl,--gc-sections -Wl,-Map=build_output/STM32_Zipper_CNC_V17_1_0_Firmware.map \
+            build_output/firmware_baremetal.cpp \
+            -lgcc -o build_output/STM32_Zipper_CNC_V17_1_0_Firmware.elf
+
+          arm-none-eabi-objcopy -O binary build_output/STM32_Zipper_CNC_V17_1_0_Firmware.elf build_output/STM32_Zipper_CNC_V17_1_0_Firmware.bin
+          arm-none-eabi-objcopy -O ihex build_output/STM32_Zipper_CNC_V17_1_0_Firmware.elf build_output/STM32_Zipper_CNC_V17_1_0_Firmware.hex
+
+          echo "=== PURE BARE-METAL MEMORY USAGE REPORT ==="
+          arm-none-eabi-size -A build_output/STM32_Zipper_CNC_V17_1_0_Firmware.elf
+          arm-none-eabi-size -B build_output/STM32_Zipper_CNC_V17_1_0_Firmware.elf
+          ls -lh build_output/STM32_Zipper_CNC_V17_1_0_Firmware.bin build_output/STM32_Zipper_CNC_V17_1_0_Firmware.hex
+
+          BIN_SIZE=$(stat -c%s build_output/STM32_Zipper_CNC_V17_1_0_Firmware.bin)
+          echo "Pure Bare-Metal Binary Size: ${BIN_SIZE} bytes (Limit: 31744 bytes for 32KB STM32F103C6T6 with Page 31 EEPROM)"
+          if [ "$BIN_SIZE" -gt 31744 ]; then
+            echo "ERROR: Binary exceeds 31KB Flash limit!"
+            exit 1
+          fi
+          echo "SUCCESS: 100% Pure C/CMSIS Bare-Metal Firmware fits effortlessly inside 32KB STM32F103C6T6!"
+
+      - name: Upload Compiled Firmware Artifacts (.bin / .hex / .elf)
+        uses: actions/upload-artifact@v4
+        with:
+          name: STM32_Zipper_CNC_V17_1_0_Compiled_Binaries
+          path: |
+            build_output/*.bin
+            build_output/*.hex
+            build_output/*.elf
+            build_output/*.map
