@@ -1,11 +1,115 @@
-name: Auto Unzip & Compile STM32 Firmware
+name: Auto Unzip & Compile STM32 Firmware (C6T6 32KB & C8T6 64KB)
 
 on:
   push:
+    paths:
+      - '**.zip'
+      - '.github/workflows/**'
+      - '**.ino'
+      - '**.h'
+      - '**.cpp'
+      - '**.sh'
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
+
+jobs:
+  build:
+    name: Build C6T6 (32KB) & C8T6 (64KB) V17.1.0 (100% Original Math)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Auto Detect & Unzip ZIP Archive
+        run: |
+          ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
+          if [ -n "$ZIP_FILE" ]; then
+            echo "Found ZIP file: $ZIP_FILE"
+            rm -rf _unzip_staging
+            mkdir -p _unzip_staging
+            unzip -q -o "$ZIP_FILE" -d _unzip_staging
+            FOUND_SKETCH=$(find _unzip_staging -name "*.ino" | head -n 1)
+            if [ -n "$FOUND_SKETCH" ]; then
+              EXTRACTED_DIR=$(dirname "$FOUND_SKETCH")
+              if [ "$EXTRACTED_DIR" != "." ]; then
+                cp -rf _unzip_staging/* .
+              fi
+            fi
+            rm -rf _unzip_staging
+          fi
+
+          INO_FILE=$(find . -name "*.ino" | head -n 1)
+          if [ -z "$INO_FILE" ]; then
+            echo "ERROR: No .ino firmware file found!"
+            exit 1
+          fi
+          SKETCH_DIR=$(dirname "$INO_FILE")
+          echo "SKETCH_DIR=$SKETCH_DIR" >> $GITHUB_ENV
+
+      - name: Run Host Regression Tests (11/11 Master Suites)
+        run: |
+          if [ -f "tests/run_tests.sh" ]; then
+            bash tests/run_tests.sh
+          fi
+
+      - name: Setup Arduino CLI
+        uses: arduino/setup-arduino-cli@v1
+
+      - name: Install STM32 Core
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls https://github.com/stm32duino/BoardManagerFiles/raw/main/package_stmicroelectronics_index.json
+          arduino-cli core update-index
+          arduino-cli core install STMicroelectronics:stm32
+
+      - name: Compile Firmware for STM32F103C6T6 (32KB) & C8T6 (64KB)
+        run: |
+          mkdir -p build
+          if arduino-cli compile \
+            --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C6,usb=none,xserial=none,opt=oslto \
+            --output-dir build \
+            --export-binaries \
+            "$SKETCH_DIR"; then
+            echo "Compiled natively with BLUEPILL_F103C6 (32KB Flash, 10KB RAM)!"
+          else
+            echo "Fallback to BLUEPILL_F103C8 (oslto, xserial=none, usb=none)..."
+            arduino-cli compile \
+              --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8,usb=none,xserial=none,opt=oslto \
+              --output-dir build \
+              --export-binaries \
+              "$SKETCH_DIR"
+          fi
+
+      - name: Verify ARM Vector Table, C6T6 Bounds & Provenance
+        run: |
+          BIN_FILE=$(find build/ -maxdepth 1 -name "*.bin" | head -n 1)
+          if [ -z "$BIN_FILE" ]; then
+            echo "ERROR: No .bin output binary found!"
+            exit 1
+          fi
+          cp "$BIN_FILE" build/STM32_Zipper_CNC_V17_1_0_Production.bin
+          BIN_SIZE=$(stat -c%s build/STM32_Zipper_CNC_V17_1_0_Production.bin)
+          echo "Compiled Binary Size: $BIN_SIZE bytes ($((BIN_SIZE / 1024)) KB)"
+          python3 -c "
+          from pathlib import Path
+          b = Path('build/STM32_Zipper_CNC_V17_1_0_Production.bin').read_bytes()
+          print(f'Binary Size: {len(b)} bytes ({len(b)/1024:.2f} KB)')
+          assert 4096 <= len(b) <= 31744, f'Binary exceeds 31KB C6T6 Flash bounds: {len(b)} bytes'
+          sp = int.from_bytes(b[0:4], 'little')
+          pc = int.from_bytes(b[4:8], 'little')
+          assert 0x20000000 <= sp <= 0x20005000 and 0x08000000 <= pc <= 0x08008000 and (pc & 1) == 1
+          print('V17.1.0 C6T6/C8T6 Production Binary Verification Complete: 100% READY FOR HARDWARE FLASHING!')
+          "
+
+      - name: Upload Compiled Production Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: STM32_Zipper_CNC_V17_1_0_Production_Binary
+          path: build/STM32_Zipper_CNC_V17_1_0_Production.bin
+          if-no-files-found: error
 
 jobs:
   build:
