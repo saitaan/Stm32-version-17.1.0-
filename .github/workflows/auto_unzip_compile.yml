@@ -83,11 +83,17 @@ jobs:
           mkdir -p build
           echo "Compiling sketch in $SKETCH_DIR for STM32 Blue Pill..."
           arduino-cli compile \
-            --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C6,usb=none,xserial=none,opt=oslto\
+            --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C6,usb=none,xserial=none,opt=oslto\ 
             --warnings all \
             --output-dir build \
             --export-binaries \
-            "$SKETCH_DIR" || arduino-cli compile --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8,usb=none,xserial=none,opt=oslto --warnings all --output-dir build --export-binaries "$SKETCH_DIR"
+                      "$SKETCH_DIR"
+        arduino-cli compile \
+          --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8,usb=none,xserial=none,opt=oslto \
+          --warnings all \
+          --output-dir build \
+          --export-binaries \
+          "$SKETCH_DIR"
 
       - name: 🔍 Verify ARM Vector Table & V17.1.0 Provenance
         run: |
