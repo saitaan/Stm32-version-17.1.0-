@@ -47,7 +47,7 @@ jobs:
           INO_FILE=$(find . -name "*.ino" | head -n 1)
           if [ -n "$INO_FILE" ]; then
             SKETCH_DIR=$(dirname "$INO_FILE")
-            arduino-cli compile --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8 "$SKETCH_DIR" --output-dir build
+            arduino-cli compile --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8 "$SKETCH_DIR" --output-dir build --build-property "compiler.c.elf.extra_flags=-specs=nano.specs -Wl,--gc-sections"
           fi
 
       - name: Upload Artifacts
