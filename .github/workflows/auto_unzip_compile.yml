@@ -97,7 +97,7 @@ jobs:
 
           arm-none-eabi-g++ \
             -mcpu=cortex-m3 -mthumb \
-            -Os -flto -fno-builtin -fno-tree-loop-distribute-patterns \
+            -Os -flto -fno-tree-loop-distribute-patterns \
             -ffunction-sections -fdata-sections \
             -fno-exceptions -fno-rtti -fno-use-cxa-atexit -fno-threadsafe-statics \
             -nostdlib -nostartfiles \
